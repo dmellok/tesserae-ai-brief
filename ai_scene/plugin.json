@@ -1,7 +1,7 @@
 {
   "tesserae_compat": "1.x",
   "name": "AI Scene",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "kind": "widget",
   "description": "Full-bleed AI-generated image whose prompt is rewritten every refresh from live data: weather, calendar events, Home Assistant entities, time of day. The image adapts to the dashboard's actual context. Bring your own Fal.ai API key (configured once on the AI Core plugin). Defaults to Flux Schnell (~$0.003/image, ~$2.20/month at hourly refresh).",
   "icon": "ph-image",
@@ -118,7 +118,7 @@
       "max": 2048,
       "step": 64,
       "placeholder": "auto — uses cell width",
-      "help": "Leave empty to use the cell's actual width (rounded up to the next multiple of 64, clamped to [512, 2048]). Set explicitly to override."
+      "help": "Leave empty to use the cell's actual width (rounded up to the next multiple of 64, clamped to [512, 2048]). Set explicitly to override. Note: Nano Banana and Nano Banana 2 ignore custom dimensions and always render 1024×1024 — pick a different model if you need a non-square output."
     },
     {
       "name": "image_height",

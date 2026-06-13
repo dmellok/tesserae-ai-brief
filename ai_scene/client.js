@@ -88,12 +88,14 @@ export default function render(shadow, ctx) {
     shadow.innerHTML = `${css}${style}${emptyCard()}`;
     return;
   }
-  // Resolved prompt as alt text so the rendered frame stays
-  // self-describing for screen readers + debugging.
-  const alt = data.resolved_prompt || "AI generated scene";
+  // Deliberately generic alt. The resolved prompt could be quite
+  // long, and some browser / iframe contexts (Recraft v3 webp was
+  // the visible regression) fall back to rendering alt text when the
+  // img source fails to embed — better that the user sees a neutral
+  // label than the whole prompt template materialised on the panel.
   shadow.innerHTML = `
     ${css}${style}
     <div class="w" data-widget="ai_scene">
-      <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(alt)}" loading="eager" decoding="sync">
+      <img src="${escapeHtml(imageUrl)}" alt="AI Scene" loading="eager" decoding="sync">
     </div>`;
 }

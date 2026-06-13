@@ -20,15 +20,18 @@ the widget.
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import re
 import urllib.error
 import urllib.request
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from flask import current_app
+from flask import Blueprint, abort, current_app, send_from_directory
 
 USER_AGENT = "tesserae/0.1 (+ai_core)"
 ANTHROPIC_VERSION = "2023-06-01"
@@ -220,7 +223,106 @@ def fal_call(
     image_url = _pick_fal_image_url(payload)
     if not image_url:
         return {"error": "Fal response did not contain an image URL"}
-    return {"image_url": image_url, "model": model}
+    # Re-host the image locally. Two reasons:
+    #   1. Fal's CDN serves images with a sandboxed CSP that breaks
+    #      embedding in some browser / iframe contexts (Recraft v3 was
+    #      the visible regression: webp images returned alt text in
+    #      the cell editor preview rather than the actual image).
+    #   2. Fal storage URLs are not promised to be permanent. A cached
+    #      local copy means the widget keeps painting after Fal rotates
+    #      its CDN paths.
+    cached_url = _cache_remote_image(image_url) or image_url
+    return {"image_url": cached_url, "model": model, "fal_url": image_url}
+
+
+# ---------------------------------------------------------------- image cache
+
+
+_CACHE_TIMEOUT_S = 30
+_CACHE_MAX_BYTES = 16 * 1024 * 1024  # 16 MiB; the largest Fal model output
+
+
+def _data_dir() -> Path | None:
+    """Resolve ai_core's data_dir from the plugin registry. Returns
+    None when running outside a request context (e.g. unit tests),
+    so callers can fall back to passing through the upstream URL."""
+    try:
+        registry = current_app.config["PLUGIN_REGISTRY"]
+    except (RuntimeError, KeyError):
+        return None
+    plugin = registry.get("ai_core")
+    if plugin is None:
+        return None
+    return plugin.data_dir  # type: ignore[no-any-return]
+
+
+def _cache_remote_image(url: str) -> str | None:
+    """Download ``url`` into ai_core's data_dir/cache/ and return a
+    local URL pointing at the cached copy. Returns ``None`` on any
+    failure so the caller can fall back to the original URL.
+
+    The cache filename is the sha256 of the URL itself + the original
+    extension, so the same Fal URL hits the same file (and a single
+    Recraft / Nano Banana render is downloaded only once across
+    multiple cells using the same prompt).
+    """
+    data_dir = _data_dir()
+    if data_dir is None:
+        return None
+    cache_dir = data_dir / "cache"
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+
+    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:24]
+    # Pull the file extension off the original URL. Strip query
+    # strings since Fal sometimes signs URLs.
+    bare = url.split("?", 1)[0]
+    ext = bare.rsplit(".", 1)[-1].lower() if "." in bare.rsplit("/", 1)[-1] else "bin"
+    if ext not in {"png", "jpg", "jpeg", "webp", "gif", "bin"}:
+        ext = "bin"
+    filename = f"{digest}.{ext}"
+    target = cache_dir / filename
+    if not target.exists():
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+            with urllib.request.urlopen(req, timeout=_CACHE_TIMEOUT_S) as resp:  # noqa: S310
+                data = resp.read(_CACHE_MAX_BYTES + 1)
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return None
+        if not data or len(data) > _CACHE_MAX_BYTES:
+            return None
+        with contextlib.suppress(OSError):
+            target.write_bytes(data)
+        if not target.exists():
+            return None
+    return f"/plugins/ai_core/cache/{filename}"
+
+
+def blueprint() -> Blueprint:
+    """Serve cached Fal images under /plugins/ai_core/cache/<file>.
+
+    Tesserae's plugin_loader mounts each plugin's blueprint under
+    ``/plugins/<id>/`` automatically, so this route lives at
+    ``/plugins/ai_core/cache/<filename>``.
+    """
+    bp = Blueprint("ai_core", __name__)
+
+    @bp.get("/cache/<path:filename>")
+    def cached(filename: str) -> Any:
+        # Block path traversal — only flat files inside cache/.
+        if "/" in filename or filename.startswith("."):
+            abort(404)
+        data_dir = _data_dir()
+        if data_dir is None:
+            abort(404)
+        cache_dir = data_dir / "cache"
+        if not cache_dir.exists():
+            abort(404)
+        return send_from_directory(cache_dir, filename)
+
+    return bp
 
 
 def _pick_fal_image_url(payload: Any) -> str | None:
