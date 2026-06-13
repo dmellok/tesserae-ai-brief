@@ -38,8 +38,8 @@ def _opts(**overrides: Any) -> dict[str, Any]:
         "ha_entities": "",
         "negative_prompt": "",
         "refresh_minutes": 60,
-        "image_width": 1024,
-        "image_height": 1024,
+        "image_width": "",
+        "image_height": "",
     }
     base.update(overrides)
     return base
@@ -171,3 +171,56 @@ def test_cache_key_changes_with_model(tmp_path: Path) -> None:
         second = server.fetch(_opts(model="fal-ai/fast-sdxl"), {}, ctx=_ctx(tmp_path))
     assert first["image_url"] != second["image_url"]
     ai_core.fal_call.assert_called_once()
+
+
+# -- request dimensions -----------------------------------------------------
+
+
+def test_round_to_64_rounds_up_and_clamps() -> None:
+    assert server._round_to_64(800) == 832
+    assert server._round_to_64(480) == 512  # would round to 512, also the minimum
+    assert server._round_to_64(1600) == 1600  # already a multiple of 64
+    assert server._round_to_64(1200) == 1216
+    assert server._round_to_64(400) == 512  # clamped to minimum
+    assert server._round_to_64(3000) == 2048  # clamped to maximum
+    assert server._round_to_64(0) == 512  # zero → minimum
+    assert server._round_to_64(-5) == 512  # negative → minimum
+
+
+def test_request_dims_uses_cell_dimensions_when_options_empty(tmp_path: Path) -> None:
+    """Cell of 800×480 → Fal gets 832×512 (next multiple of 64, with
+    min-clamp on the height)."""
+    ai_core = _mock_ai_core()
+    with _fake_app(ai_core):
+        server.fetch(
+            _opts(),
+            {},
+            ctx={**_ctx(tmp_path), "cell_w": 800, "cell_h": 480},
+        )
+    args, kwargs = ai_core.fal_call.call_args
+    assert kwargs.get("width") == 832
+    assert kwargs.get("height") == 512
+
+
+def test_request_dims_explicit_overrides_cell(tmp_path: Path) -> None:
+    """When the user pins width/height on the cell, those win."""
+    ai_core = _mock_ai_core()
+    with _fake_app(ai_core):
+        server.fetch(
+            _opts(image_width=1024, image_height=768),
+            {},
+            ctx={**_ctx(tmp_path), "cell_w": 800, "cell_h": 480},
+        )
+    _, kwargs = ai_core.fal_call.call_args
+    assert kwargs.get("width") == 1024
+    assert kwargs.get("height") == 768
+
+
+def test_request_dims_fallback_when_no_cell_no_explicit(tmp_path: Path) -> None:
+    """Sample-mode renders have no cell dims; fallback is 1024×1024."""
+    ai_core = _mock_ai_core()
+    with _fake_app(ai_core):
+        server.fetch(_opts(), {}, ctx=_ctx(tmp_path))
+    _, kwargs = ai_core.fal_call.call_args
+    assert kwargs.get("width") == 1024
+    assert kwargs.get("height") == 1024

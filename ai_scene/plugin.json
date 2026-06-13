@@ -1,7 +1,7 @@
 {
   "tesserae_compat": "1.x",
   "name": "AI Scene",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "kind": "widget",
   "description": "Full-bleed AI-generated image whose prompt is rewritten every refresh from live data: weather, calendar events, Home Assistant entities, time of day. The image adapts to the dashboard's actual context. Bring your own Fal.ai API key (configured once on the AI Core plugin). Defaults to Flux Schnell (~$0.003/image, ~$2.20/month at hourly refresh).",
   "icon": "ph-image",
@@ -113,20 +113,23 @@
       "name": "image_width",
       "type": "number",
       "label": "Fal request width (px)",
-      "default": 1024,
+      "default": "",
       "min": 256,
       "max": 2048,
       "step": 64,
-      "help": "What Fal generates at. The renderer will scale + dither to the panel afterwards. Match the cell's aspect ratio for the best framing."
+      "placeholder": "auto — uses cell width",
+      "help": "Leave empty to use the cell's actual width (rounded up to the next multiple of 64, clamped to [512, 2048]). Set explicitly to override."
     },
     {
       "name": "image_height",
       "type": "number",
       "label": "Fal request height (px)",
-      "default": 1024,
+      "default": "",
       "min": 256,
       "max": 2048,
-      "step": 64
+      "step": 64,
+      "placeholder": "auto — uses cell height",
+      "help": "Leave empty to use the cell's actual height (same rounding rules as the width)."
     }
   ]
 }

@@ -161,14 +161,19 @@ def _round(value: Any) -> str | None:
 
 
 def _fetch_calendar() -> dict[str, Any] | None:
-    """Build {events_today, next: {title, in_minutes}} via calendar_core."""
+    """Build {events_today, next: {title, in_minutes}} via calendar_core.
+
+    calendar_core.load_events signature is
+    ``(feed_ids: list[str] | None, start: datetime, end: datetime)``.
+    Passing ``None`` for feed_ids includes every enabled feed.
+    """
     core = _peer("calendar_core")
     if core is None or not hasattr(core, "load_events"):
         return None
     now = datetime.now(UTC)
     window_end = now + timedelta(hours=24)
     try:
-        events = core.load_events(now, window_end)
+        events = core.load_events(None, now, window_end)
     except Exception:
         return None
     if not isinstance(events, list):

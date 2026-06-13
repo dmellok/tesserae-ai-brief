@@ -52,6 +52,45 @@ def _parse_entity_list(raw: Any) -> list[str]:
     return [tok.strip() for tok in str(raw).replace("\n", ",").split(",") if tok.strip()]
 
 
+def _round_to_64(n: int, *, minimum: int = 512, maximum: int = 2048) -> int:
+    """Round ``n`` up to the next multiple of 64, clamped to a Fal-
+    friendly range. Most Fal image models (Flux variants, SDXL,
+    Recraft) require dimensions to be multiples of 64 in [512, 2048].
+    Smaller crashes some Flux variants with a model-input error;
+    larger spikes cost + latency without quality gain at most cell
+    sizes. Rounding UP rather than nearest so the image never has
+    less resolution than the cell needs."""
+    if n <= 0:
+        return minimum
+    rounded = ((int(n) + 63) // 64) * 64
+    return max(minimum, min(maximum, rounded))
+
+
+def _request_dims(
+    options: dict[str, Any], ctx: dict[str, Any]
+) -> tuple[int, int]:
+    """Resolve the (width, height) Fal should generate at.
+
+    Priority:
+      1. Explicit ``image_width`` / ``image_height`` on the cell, if set.
+      2. The cell's actual pixel size from ``ctx`` (``cell_w`` /
+         ``cell_h``), rounded UP to the next multiple of 64.
+      3. Square 1024x1024 fallback if neither is available (preview
+         outside a composition).
+
+    Without this, every generation defaulted to 1024x1024 and either
+    got stretched or aggressively cropped to fit the cell, which is
+    the whole point of telling Fal what aspect ratio to render at.
+    """
+    explicit_w = int(options.get("image_width") or 0)
+    explicit_h = int(options.get("image_height") or 0)
+    cell_w = int(ctx.get("cell_w") or 0)
+    cell_h = int(ctx.get("cell_h") or 0)
+    width = explicit_w if explicit_w > 0 else _round_to_64(cell_w or 1024)
+    height = explicit_h if explicit_h > 0 else _round_to_64(cell_h or 1024)
+    return width, height
+
+
 def _http_json(url: str) -> dict[str, Any] | None:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
@@ -156,13 +195,16 @@ def _round(value: Any) -> str | None:
 
 
 def _fetch_calendar() -> dict[str, Any] | None:
+    """calendar_core.load_events signature is
+    ``(feed_ids: list[str] | None, start: datetime, end: datetime)``.
+    Passing ``None`` for feed_ids includes every enabled feed."""
     core = _peer("calendar_core")
     if core is None or not hasattr(core, "load_events"):
         return None
     now = datetime.now(UTC)
     window_end = now + timedelta(hours=24)
     try:
-        events = core.load_events(now, window_end)
+        events = core.load_events(None, now, window_end)
     except Exception:
         return None
     if not isinstance(events, list):
@@ -215,8 +257,7 @@ def fetch(
     ha_allow = _parse_entity_list(options.get("ha_entities"))
     refresh_minutes = max(5, int(options.get("refresh_minutes") or 60))
     model = (str(options.get("model") or "").strip()) or "fal-ai/flux/schnell"
-    width = max(256, int(options.get("image_width") or 1024))
-    height = max(256, int(options.get("image_height") or 1024))
+    width, height = _request_dims(options, ctx)
     negative_prompt = str(options.get("negative_prompt") or "").strip()
 
     data_dir = Path(ctx["data_dir"])
