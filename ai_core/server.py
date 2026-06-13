@@ -379,15 +379,27 @@ def _resolve_ha(rest: list[str], allow: set[str]) -> str:
 
 
 def _tz_now() -> datetime:
-    """Render time in the server's configured timezone (Settings ->
-    Server -> Timezone), falling back to UTC. Mirrors how clock + weather
-    widgets pick their wall clock."""
+    """Render time in the host's effective wall clock.
+
+    Matches Tesserae's canonical timezone resolution (see
+    ``app.app_factory._resolve_timezone``):
+
+      * Reads ``settings.json -> app.timezone`` (NOT ``server``; the
+        section name was wrong in v0.1.x and v0.2.0 so every render
+        landed in UTC, off by the user's offset).
+      * ``"system"`` / empty / unknown IANA name falls back to the
+        host's local timezone via ``datetime.now().astimezone()`` so
+        ``{time.hour}`` matches what the user sees on their wall
+        clock, not what UTC says.
+    """
     store = current_app.config["SETTINGS_STORE"]
-    tz_name = (store.get_section("server") or {}).get("timezone") or "UTC"
+    raw = str((store.get_section("app") or {}).get("timezone") or "system").strip()
+    if not raw or raw.lower() == "system":
+        return datetime.now().astimezone()
     try:
-        return datetime.now(ZoneInfo(tz_name))
+        return datetime.now(ZoneInfo(raw))
     except Exception:
-        return datetime.now(ZoneInfo("UTC"))
+        return datetime.now().astimezone()
 
 
 def resolve_placeholders(

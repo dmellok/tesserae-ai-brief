@@ -47,6 +47,36 @@ def test_resolve_time_placeholders() -> None:
     assert debug["time.is_morning"] == "true"
 
 
+def test_tz_now_with_iana_zone_returns_aware_dt_in_that_zone() -> None:
+    """When app.timezone is a real IANA name, _tz_now reads from that
+    zone — regression test for v0.1.x / v0.2.0 reading the wrong
+    section name ('server' instead of 'app') and silently falling
+    back to UTC."""
+    with _fake_app(timezone="Australia/Melbourne"):
+        now = server._tz_now()
+    assert now.tzinfo is not None
+    # zoneinfo lookups return a ZoneInfo object whose str() is the IANA name.
+    assert str(now.tzinfo) == "Australia/Melbourne"
+
+
+def test_tz_now_with_system_sentinel_returns_host_local() -> None:
+    """``'system'`` (Tesserae's "no override, use the host's wall
+    clock" sentinel) falls back to ``datetime.now().astimezone()`` so
+    the returned dt is timezone-aware but in the host's zone."""
+    with _fake_app(timezone="system"):
+        now = server._tz_now()
+    assert now.tzinfo is not None
+    assert str(now.tzinfo) != "UTC"  # asserts not the broken UTC fallback
+
+
+def test_tz_now_with_unknown_zone_falls_back_to_host_local() -> None:
+    """An invalid IANA name doesn't crash; falls back to host-local
+    same as 'system'."""
+    with _fake_app(timezone="Not/A/Real/Zone"):
+        now = server._tz_now()
+    assert now.tzinfo is not None
+
+
 def test_resolve_weather_nested_dict() -> None:
     weather = {"now": {"condition": "partly cloudy", "temp_c": "14"}}
     with _fake_app(timezone="UTC"):
@@ -253,7 +283,7 @@ def _fake_app(
     real Flask app or app_context push.
     """
     sections = {
-        "server": {"timezone": timezone},
+        "app": {"timezone": timezone},
         "plugins": {"ai_core": settings or {}},
     }
     registry = {

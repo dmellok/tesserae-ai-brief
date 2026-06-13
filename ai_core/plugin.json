@@ -1,7 +1,7 @@
 {
   "tesserae_compat": "1.x",
   "name": "AI Core",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "kind": "data",
   "description": "Shared AI service connections + context resolver for the ai_* widget family. Holds the Anthropic API key (used by ai_brief for text) and the Fal.ai API key (used by ai_scene for image generation). Resolves placeholders like {weather.now.temp_c}, {calendar.next.title}, {ha.entity.<entity_id>.state}, {time.day_of_week} against the live state of other widget cores. No cell of its own.",
   "icon": "ph-sparkle",

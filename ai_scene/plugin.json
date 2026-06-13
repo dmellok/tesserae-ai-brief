@@ -1,7 +1,7 @@
 {
   "tesserae_compat": "1.x",
   "name": "AI Scene",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "kind": "widget",
   "description": "Full-bleed AI-generated image whose prompt is rewritten every refresh from live data: weather, calendar events, Home Assistant entities, time of day. The image adapts to the dashboard's actual context. Bring your own Fal.ai API key (configured once on the AI Core plugin). Defaults to Flux Schnell (~$0.003/image, ~$2.20/month at hourly refresh).",
   "icon": "ph-image",
