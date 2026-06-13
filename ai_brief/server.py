@@ -214,8 +214,14 @@ def fetch(
     if ai_core is None:
         return {"error": "AI Core plugin not installed."}
 
-    lat = float(options.get("latitude") or 0.0)
-    lon = float(options.get("longitude") or 0.0)
+    # Server-level home location (Settings → Server → Location) is the
+    # fallback when the cell's lat/lon fields are empty. Saves the user
+    # from re-typing the same coordinates on every weather-aware widget.
+    # Tesserae >= 0.46.7 injects ctx["home_lat"] / ctx["home_lon"];
+    # older hosts return 0.0 from the default and the widget renders
+    # a "configure location" state.
+    lat = float(options.get("latitude") or ctx.get("home_lat") or 0.0)
+    lon = float(options.get("longitude") or ctx.get("home_lon") or 0.0)
     units = str(options.get("units") or "metric")
     include_calendar = options.get("include_calendar", True) is not False
     ha_allow = _parse_entity_list(options.get("ha_entities"))
