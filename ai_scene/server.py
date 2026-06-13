@@ -259,6 +259,7 @@ def fetch(
     model = (str(options.get("model") or "").strip()) or "fal-ai/flux/schnell"
     width, height = _request_dims(options, ctx)
     negative_prompt = str(options.get("negative_prompt") or "").strip()
+    scale = (str(options.get("scale") or "").strip()) or "fill"
 
     data_dir = Path(ctx["data_dir"])
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -306,6 +307,7 @@ def fetch(
         "generated_at": _utcnow_iso(),
         "resolved_prompt": resolved_prompt,
         "debug_values": debug_values,
+        "scale": scale,
         "from_cache": False,
     }
     with contextlib.suppress(OSError):

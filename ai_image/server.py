@@ -190,6 +190,7 @@ def fetch(
     eink_friendly = options.get("eink_friendly", True) is not False
     negative_prompt = str(options.get("negative_prompt") or "").strip()
     refresh_hours = int(options.get("refresh_hours") or 6)
+    scale = (str(options.get("scale") or "").strip()) or "fill"
 
     now = datetime.now(UTC)
     bucket = _bucket_from_refresh_hours(refresh_hours, now)
@@ -239,6 +240,7 @@ def fetch(
         "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "resolved_prompt": full_prompt,
         "bucket": bucket,
+        "scale": scale,
         "from_cache": False,
     }
     with contextlib.suppress(OSError):

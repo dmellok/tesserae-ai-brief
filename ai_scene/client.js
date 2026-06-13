@@ -1,8 +1,8 @@
-// ai_scene, full-bleed AI-generated image. The image URL comes from
-// Fal.ai with a prompt rewritten every refresh from live data. The
-// renderer treats this widget as full_bleed, so the image fills the
-// cell edge-to-edge. Error states swap the image for a muted
-// "configure me" placeholder so a fresh install still renders.
+// ai_scene, full-bleed AI-generated image. The image URL is a local
+// /plugins/ai_core/cache/<sha>.<ext> from ai_core's image cache, so
+// the Fal-CDN sandboxed-CSP gotcha doesn't apply. Uses Tesserae's
+// ``.w.is-bleed`` shell so the cell host strips its default padding
+// + border and the image really does fill edge-to-edge.
 
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({
@@ -10,66 +10,39 @@ function escapeHtml(s) {
   }[c]));
 }
 
+// Tesserae's spectra-widgets.css already handles .w.is-bleed > img.
+// We add a tiny overlay rule for the fit-mode letterbox, plus the
+// error / empty fallbacks.
 const LAYOUT = `
-.w[data-widget="ai_scene"] {
-  height: 100%;
-  width: 100%;
+.w.is-bleed > img.is-fit {
+  object-fit: contain;
   background: var(--bg);
-  display: flex;
-  align-items: stretch;
-  justify-content: stretch;
-  overflow: hidden;
 }
-.w[data-widget="ai_scene"] img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.ai-scene-error,
-.ai-scene-empty {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.6em;
+.ai-scene-state {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 0.5em; padding: 1.5em;
   color: var(--text-muted);
-  text-align: center;
-  padding: 1.5em;
   font-family: var(--font-family, inherit);
+  text-align: center;
 }
-.ai-scene-error i,
-.ai-scene-empty i {
-  font-size: 3em;
+.ai-scene-state i {
+  font-size: 2.6em;
   color: var(--accent-4);
 }
-.ai-scene-error p,
-.ai-scene-empty p {
-  margin: 0;
-  max-width: 30ch;
-  font-size: 0.95em;
-  line-height: 1.4;
+.ai-scene-state p {
+  margin: 0; max-width: 30ch;
+  font-size: 0.95em; line-height: 1.4;
 }
 `;
 
-function errorCard(message) {
+function stateCard(icon, message) {
   return `
-    <div class="w" data-widget="ai_scene">
-      <div class="ai-scene-error">
-        <i class="ph-bold ph-warning-circle"></i>
+    <div class="w is-bleed" data-widget="ai_scene">
+      <div class="ai-scene-state">
+        <i class="ph-bold ph-${icon}"></i>
         <p>${escapeHtml(message)}</p>
-      </div>
-    </div>`;
-}
-
-function emptyCard() {
-  return `
-    <div class="w" data-widget="ai_scene">
-      <div class="ai-scene-empty">
-        <i class="ph-bold ph-sparkle"></i>
-        <p>Waiting for the first generation...</p>
       </div>
     </div>`;
 }
@@ -78,24 +51,19 @@ export default function render(shadow, ctx) {
   const data = ctx?.data ?? {};
   const css = `<link rel="stylesheet" href="/static/style/spectra-widgets.css">`;
   const style = `<style>${LAYOUT}</style>`;
-
   if (data.error) {
-    shadow.innerHTML = `${css}${style}${errorCard(data.error)}`;
+    shadow.innerHTML = `${css}${style}${stateCard("warning-circle", data.error)}`;
     return;
   }
   const imageUrl = data.image_url;
   if (!imageUrl) {
-    shadow.innerHTML = `${css}${style}${emptyCard()}`;
+    shadow.innerHTML = `${css}${style}${stateCard("sparkle", "Waiting for the first generation...")}`;
     return;
   }
-  // Deliberately generic alt. The resolved prompt could be quite
-  // long, and some browser / iframe contexts (Recraft v3 webp was
-  // the visible regression) fall back to rendering alt text when the
-  // img source fails to embed — better that the user sees a neutral
-  // label than the whole prompt template materialised on the panel.
+  const fitClass = (data.scale === "fit") ? "is-fit" : "";
   shadow.innerHTML = `
     ${css}${style}
-    <div class="w" data-widget="ai_scene">
-      <img src="${escapeHtml(imageUrl)}" alt="AI Scene" loading="eager" decoding="sync">
+    <div class="w is-bleed" data-widget="ai_scene">
+      <img class="${fitClass}" src="${escapeHtml(imageUrl)}" alt="AI Scene" loading="eager" decoding="sync">
     </div>`;
 }

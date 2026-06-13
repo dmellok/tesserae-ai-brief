@@ -1,10 +1,9 @@
-// ai_image, full-bleed AI-generated art. The image URL is a local
-// /plugins/ai_core/cache/<sha>.<ext> from ai_core's image cache, so
-// the Fal-CDN sandboxed-CSP gotcha doesn't apply.
-//
-// Heir to fal_image. Same shape (full_bleed cell, single <img> with
-// object-fit: cover), neutral alt text so a failed embed never
-// renders the prompt template.
+// ai_image, full-bleed AI-generated art. Uses Tesserae's
+// ``.w.is-bleed`` shell so the host strips its default padding and
+// border, then the single <img> covers (or contains, per the scale
+// option) the cell edge-to-edge. Image URL is the local
+// /plugins/ai_core/cache/<sha>.<ext> so Fal-CDN sandboxed-CSP isn't
+// in the embedding path.
 
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({
@@ -12,61 +11,39 @@ function escapeHtml(s) {
   }[c]));
 }
 
+// Tesserae's spectra-widgets.css already handles .w.is-bleed > img.
+// We add a tiny overlay rule for the fit-mode letterbox (centred,
+// dark backdrop, image contained), plus the error / empty fallbacks.
 const LAYOUT = `
-.w[data-widget="ai_image"] {
-  height: 100%;
-  width: 100%;
+.w.is-bleed > img.is-fit {
+  object-fit: contain;
   background: var(--bg);
-  display: flex;
-  align-items: stretch;
-  justify-content: stretch;
-  overflow: hidden;
 }
-.w[data-widget="ai_image"] img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.ai-image-error, .ai-image-empty {
-  width: 100%;
-  height: 100%;
+.ai-image-state {
+  position: absolute; inset: 0;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
-  gap: 0.6em;
-  padding: 1.5em;
+  gap: 0.6em; padding: 1.5em;
   color: var(--text-muted);
   font-family: var(--font-family, inherit);
   text-align: center;
 }
-.ai-image-error i, .ai-image-empty i {
+.ai-image-state i {
   font-size: 3em;
   color: var(--accent-4);
 }
-.ai-image-error p, .ai-image-empty p {
-  margin: 0;
-  max-width: 30ch;
-  font-size: 0.95em;
-  line-height: 1.4;
+.ai-image-state p {
+  margin: 0; max-width: 30ch;
+  font-size: 0.95em; line-height: 1.4;
 }
 `;
 
-function errorCard(message) {
+function stateCard(icon, message) {
   return `
-    <div class="w" data-widget="ai_image">
-      <div class="ai-image-error">
-        <i class="ph-bold ph-warning-circle"></i>
+    <div class="w is-bleed" data-widget="ai_image">
+      <div class="ai-image-state">
+        <i class="ph-bold ph-${icon}"></i>
         <p>${escapeHtml(message)}</p>
-      </div>
-    </div>`;
-}
-
-function emptyCard() {
-  return `
-    <div class="w" data-widget="ai_image">
-      <div class="ai-image-empty">
-        <i class="ph-bold ph-image-square"></i>
-        <p>Waiting for the first generation...</p>
       </div>
     </div>`;
 }
@@ -76,17 +53,18 @@ export default function render(shadow, ctx) {
   const css = `<link rel="stylesheet" href="/static/style/spectra-widgets.css">`;
   const style = `<style>${LAYOUT}</style>`;
   if (data.error) {
-    shadow.innerHTML = `${css}${style}${errorCard(data.error)}`;
+    shadow.innerHTML = `${css}${style}${stateCard("warning-circle", data.error)}`;
     return;
   }
   const imageUrl = data.image_url;
   if (!imageUrl) {
-    shadow.innerHTML = `${css}${style}${emptyCard()}`;
+    shadow.innerHTML = `${css}${style}${stateCard("image-square", "Waiting for the first generation...")}`;
     return;
   }
+  const fitClass = (data.scale === "fit") ? "is-fit" : "";
   shadow.innerHTML = `
     ${css}${style}
-    <div class="w" data-widget="ai_image">
-      <img src="${escapeHtml(imageUrl)}" alt="AI Image" loading="eager" decoding="sync">
+    <div class="w is-bleed" data-widget="ai_image">
+      <img class="${fitClass}" src="${escapeHtml(imageUrl)}" alt="AI Image" loading="eager" decoding="sync">
     </div>`;
 }

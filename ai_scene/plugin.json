@@ -1,7 +1,7 @@
 {
   "tesserae_compat": "1.x",
   "name": "AI Scene",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "kind": "widget",
   "description": "Full-bleed AI-generated image whose prompt is rewritten every refresh from live data: weather, calendar events, Home Assistant entities, time of day. The image adapts to the dashboard's actual context. Bring your own Fal.ai API key (configured once on the AI Core plugin). Defaults to Flux Schnell (~$0.003/image, ~$2.20/month at hourly refresh).",
   "icon": "ph-image",
@@ -90,6 +90,17 @@
       "default": "",
       "placeholder": "sensor.living_room_temp, light.kitchen",
       "help": "Comma-separated entity IDs that {ha.entity.<entity_id>.state} is allowed to read. Empty = no HA placeholders resolve."
+    },
+    {
+      "name": "scale",
+      "type": "select",
+      "label": "Scale",
+      "default": "fill",
+      "choices": [
+        { "value": "fill", "label": "Fill (crop to cover; no letterbox)" },
+        { "value": "fit",  "label": "Fit (letterbox; full image visible)" }
+      ],
+      "help": "How to fit the generated image into the cell when the image and cell aspect ratios don't match."
     },
     {
       "name": "negative_prompt",

@@ -1,7 +1,7 @@
 {
   "tesserae_compat": "1.x",
   "name": "AI Image",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "kind": "widget",
   "description": "Full-bleed AI-generated image. Style presets, multi-line prompt rotation by day-bucket, time-of-day placeholders, e-ink-friendly suffix. The Fal.ai key + per-call usage tracking come from AI Core, so all generations show up in the AI Core admin page. Heir to the legacy fal_image widget.",
   "icon": "ph-image-square",
@@ -74,6 +74,17 @@
       "max": 2048,
       "step": 64,
       "placeholder": "auto — uses cell height"
+    },
+    {
+      "name": "scale",
+      "type": "select",
+      "label": "Scale",
+      "default": "fill",
+      "choices": [
+        { "value": "fill", "label": "Fill (crop to cover; no letterbox)" },
+        { "value": "fit",  "label": "Fit (letterbox; full image visible)" }
+      ],
+      "help": "How to fit the generated image into the cell when the image and cell aspect ratios don't match. Fill crops; Fit letterboxes."
     },
     {
       "name": "negative_prompt",
