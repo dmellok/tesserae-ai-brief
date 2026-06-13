@@ -42,7 +42,7 @@
       Fal.ai key {{ 'set' if has_fal_key else 'not set' }}
     </span>
     <span class="muted">·</span>
-    <a href="{{ url_for('settings.index') }}#plugins">Manage keys in Settings → Plugins → AI Core</a>
+    <a href="{{ url_for('auth.settings_area', area='plugins') }}#ai_core">Manage keys in Settings → Plugins → AI Core</a>
   </p>
 </section>
 

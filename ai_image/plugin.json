@@ -1,7 +1,7 @@
 {
   "tesserae_compat": "1.x",
   "name": "AI Image",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "kind": "widget",
   "description": "Full-bleed AI-generated image. Style presets, multi-line prompt rotation by day-bucket, time-of-day placeholders, e-ink-friendly suffix. The Fal.ai key + per-call usage tracking come from AI Core, so all generations show up in the AI Core admin page. Heir to the legacy fal_image widget.",
   "icon": "ph-image-square",
