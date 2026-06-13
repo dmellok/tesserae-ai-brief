@@ -26,7 +26,7 @@ import json
 import re
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -41,6 +41,31 @@ FAL_API_BASE = "https://fal.run"
 HTTP_TIMEOUT_S = 30
 # Image generation can take 10-60s for slower models (Flux Dev, Recraft).
 FAL_TIMEOUT_S = 90
+
+# Static cost table — USD per million tokens for Anthropic, USD per
+# image for Fal. Estimates only; actual billing is whatever the
+# provider invoices you. Numbers from each provider's published
+# pricing page; bump when those move.
+ANTHROPIC_PRICING_PER_MTOK: dict[str, tuple[float, float]] = {
+    # model_id -> (input_per_million, output_per_million)
+    "claude-haiku-4-5": (1.00, 5.00),
+    "claude-sonnet-4-6": (3.00, 15.00),
+    "claude-opus-4-8": (15.00, 75.00),
+}
+FAL_PRICING_PER_IMAGE: dict[str, float] = {
+    "fal-ai/flux/schnell": 0.003,
+    "fal-ai/fast-sdxl": 0.01,
+    "fal-ai/flux/dev": 0.025,
+    "fal-ai/flux-pro/v1.1": 0.04,
+    "fal-ai/recraft-v3": 0.04,
+    "fal-ai/nano-banana": 0.039,
+    "fal-ai/nano-banana-2": 0.08,
+}
+
+# Cap on the usage log size — rotate to ``usage.jsonl.1`` once we
+# cross this. 90 days at hourly Claude + hourly Fal sits around 1 MiB,
+# so 4 MiB is plenty for a normal home install.
+_USAGE_LOG_MAX_BYTES = 4 * 1024 * 1024
 
 # Whitelist of placeholder roots the resolver recognises. Anything
 # outside this set returns "unknown" rather than reaching into the
@@ -146,7 +171,20 @@ def call_llm(
     text = "".join(text_parts).strip()
     if not text:
         return {"error": "Empty response from model"}
-    return {"text": text, "model": payload.get("model") or body["model"]}
+    model_id = payload.get("model") or body["model"]
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    input_tokens = int(usage.get("input_tokens") or 0)
+    output_tokens = int(usage.get("output_tokens") or 0)
+    _log_usage(
+        {
+            "provider": "anthropic",
+            "model": str(model_id),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cost_usd": _anthropic_cost(model_id, input_tokens, output_tokens),
+        }
+    )
+    return {"text": text, "model": model_id}
 
 
 # ---------------------------------------------------------------- Fal image call
@@ -223,6 +261,16 @@ def fal_call(
     image_url = _pick_fal_image_url(payload)
     if not image_url:
         return {"error": "Fal response did not contain an image URL"}
+    _log_usage(
+        {
+            "provider": "fal",
+            "model": str(model),
+            "image_count": 1,
+            "width": int(width),
+            "height": int(height),
+            "cost_usd": _fal_cost(model),
+        }
+    )
     # Re-host the image locally. Two reasons:
     #   1. Fal's CDN serves images with a sandboxed CSP that breaks
     #      embedding in some browser / iframe contexts (Recraft v3 was
@@ -300,14 +348,227 @@ def _cache_remote_image(url: str) -> str | None:
     return f"/plugins/ai_core/cache/{filename}"
 
 
-def blueprint() -> Blueprint:
-    """Serve cached Fal images under /plugins/ai_core/cache/<file>.
+# ---------------------------------------------------------------- usage log + cost helpers
 
-    Tesserae's plugin_loader mounts each plugin's blueprint under
-    ``/plugins/<id>/`` automatically, so this route lives at
-    ``/plugins/ai_core/cache/<filename>``.
+
+def _anthropic_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+    """Estimated USD cost for an Anthropic call. Falls back to the
+    Haiku rate when an unknown model id sneaks through (so the totals
+    don't undercount); the per-model breakdown will still flag the
+    unknown id with its actual name."""
+    pricing = ANTHROPIC_PRICING_PER_MTOK.get(
+        model, ANTHROPIC_PRICING_PER_MTOK["claude-haiku-4-5"]
+    )
+    in_rate, out_rate = pricing
+    return (input_tokens / 1_000_000) * in_rate + (output_tokens / 1_000_000) * out_rate
+
+
+def _fal_cost(model: str) -> float:
+    """Estimated USD cost for a single Fal image. Falls back to the
+    cheapest known rate when an unknown model is used; the dashboard
+    still surfaces the unknown id."""
+    return FAL_PRICING_PER_IMAGE.get(model, 0.003)
+
+
+def _usage_log_path() -> Path | None:
+    data_dir = _data_dir()
+    if data_dir is None:
+        return None
+    return data_dir / "usage.jsonl"
+
+
+def _log_usage(record: dict[str, Any]) -> None:
+    """Append a single call record to ``usage.jsonl``. Never raises —
+    a missing data_dir, a disk-full error, or a corrupt timestamp all
+    just drop the record silently rather than break the live render
+    path. Rotates to ``usage.jsonl.1`` once the live log exceeds
+    ``_USAGE_LOG_MAX_BYTES``."""
+    path = _usage_log_path()
+    if path is None:
+        return
+    record_with_ts = {"ts": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), **record}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.stat().st_size > _USAGE_LOG_MAX_BYTES:
+            with contextlib.suppress(OSError):
+                rotated = path.with_suffix(".jsonl.1")
+                if rotated.exists():
+                    rotated.unlink()
+                path.rename(rotated)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record_with_ts, separators=(",", ":")) + "\n")
+    except OSError:
+        return
+
+
+def _iter_usage_records(*, days: int = 30) -> list[dict[str, Any]]:
+    """Read both ``usage.jsonl`` and its rotated sibling, filtering to
+    the last ``days`` days. Records that fail to parse are dropped
+    silently — a single corrupt line doesn't break aggregation."""
+    path = _usage_log_path()
+    if path is None:
+        return []
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    out: list[dict[str, Any]] = []
+    for candidate in (path.with_suffix(".jsonl.1"), path):
+        if not candidate.exists():
+            continue
+        try:
+            text = candidate.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            ts_raw = record.get("ts")
+            if not isinstance(ts_raw, str):
+                continue
+            try:
+                ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if ts < cutoff:
+                continue
+            record["_ts"] = ts
+            out.append(record)
+    out.sort(key=lambda r: r["_ts"])
+    return out
+
+
+def _aggregate_usage(
+    records: list[dict[str, Any]], *, now: datetime | None = None
+) -> dict[str, Any]:
+    """Build the snapshot the admin page renders. Pure function, easy
+    to unit-test."""
+    now = now or datetime.now(UTC)
+    today = now.strftime("%Y-%m-%d")
+    this_month = now.strftime("%Y-%m")
+    cutoff_7d = now - timedelta(days=7)
+
+    by_day: dict[str, dict[str, float]] = {}
+    by_model: dict[str, dict[str, float]] = {}
+    totals = {
+        "spend_today": 0.0,
+        "spend_month": 0.0,
+        "calls_today": 0,
+        "calls_month": 0,
+        "spend_7d": 0.0,
+        "calls_7d": 0,
+        "anthropic_spend": 0.0,
+        "fal_spend": 0.0,
+        "anthropic_calls": 0,
+        "fal_calls": 0,
+    }
+    for record in records:
+        ts = record["_ts"]
+        day_key = ts.strftime("%Y-%m-%d")
+        cost = float(record.get("cost_usd") or 0.0)
+        provider = str(record.get("provider") or "unknown")
+        model = str(record.get("model") or "unknown")
+        day_bucket = by_day.setdefault(
+            day_key, {"day": day_key, "anthropic": 0.0, "fal": 0.0, "calls": 0}
+        )
+        day_bucket[provider] = day_bucket.get(provider, 0.0) + cost
+        day_bucket["calls"] = day_bucket.get("calls", 0) + 1
+        model_bucket = by_model.setdefault(
+            model,
+            {
+                "model": model,
+                "provider": provider,
+                "calls": 0,
+                "spend": 0.0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "images": 0,
+            },
+        )
+        model_bucket["calls"] += 1
+        model_bucket["spend"] += cost
+        model_bucket["input_tokens"] += int(record.get("input_tokens") or 0)
+        model_bucket["output_tokens"] += int(record.get("output_tokens") or 0)
+        model_bucket["images"] += int(record.get("image_count") or 0)
+        if provider == "anthropic":
+            totals["anthropic_spend"] += cost
+            totals["anthropic_calls"] += 1
+        elif provider == "fal":
+            totals["fal_spend"] += cost
+            totals["fal_calls"] += 1
+        if day_key == today:
+            totals["spend_today"] += cost
+            totals["calls_today"] += 1
+        if day_key.startswith(this_month):
+            totals["spend_month"] += cost
+            totals["calls_month"] += 1
+        if ts >= cutoff_7d:
+            totals["spend_7d"] += cost
+            totals["calls_7d"] += 1
+
+    # Walk the last 30 days so the chart x-axis has a continuous zero
+    # baseline (Chart.js looks weird if you skip days where there
+    # were no calls).
+    daily_series: list[dict[str, Any]] = []
+    for offset in range(29, -1, -1):
+        day = (now - timedelta(days=offset)).strftime("%Y-%m-%d")
+        bucket = by_day.get(day) or {"day": day, "anthropic": 0.0, "fal": 0.0, "calls": 0}
+        daily_series.append(
+            {
+                "day": day,
+                "anthropic": round(bucket.get("anthropic", 0.0), 4),
+                "fal": round(bucket.get("fal", 0.0), 4),
+                "calls": int(bucket.get("calls", 0)),
+            }
+        )
+
+    # Projection: at the recent 7-day rate, how much would 30 days
+    # cost? Defends against a zero-week (empty log → 0 projection).
+    projection_monthly = (totals["spend_7d"] / 7.0) * 30.0 if totals["spend_7d"] else 0.0
+
+    model_rows = sorted(by_model.values(), key=lambda m: m["spend"], reverse=True)
+    return {
+        "totals": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in totals.items()},
+        "projection_monthly": round(projection_monthly, 2),
+        "daily_series": daily_series,
+        "model_breakdown": [
+            {
+                **row,
+                "spend": round(row["spend"], 4),
+                "avg_cost": round(row["spend"] / row["calls"], 5) if row["calls"] else 0.0,
+            }
+            for row in model_rows
+        ],
+        "record_count": len(records),
+        "anthropic_pricing": ANTHROPIC_PRICING_PER_MTOK,
+        "fal_pricing": FAL_PRICING_PER_IMAGE,
+    }
+
+
+def blueprint() -> Blueprint:
+    """Plugin admin surface for ai_core. Mounted by Tesserae's
+    plugin_loader at ``/plugins/ai_core/``.
+
+    Routes:
+      * ``GET /``            — usage dashboard (token/cost charts).
+      * ``GET /cache/<f>``   — serves a locally cached Fal image.
     """
-    bp = Blueprint("ai_core", __name__)
+    bp = Blueprint("ai_core", __name__, template_folder="templates")
+
+    @bp.get("/")
+    def index() -> str:
+        from flask import render_template  # local import keeps top of file light
+
+        records = _iter_usage_records(days=30)
+        aggregate = _aggregate_usage(records)
+        return render_template(
+            "ai_core/index.html",
+            aggregate=aggregate,
+            log_path=str(_usage_log_path()) if _usage_log_path() else "(unset)",
+            has_anthropic_key=bool(api_key()),
+            has_fal_key=bool(fal_api_key()),
+        )
 
     @bp.get("/cache/<path:filename>")
     def cached(filename: str) -> Any:

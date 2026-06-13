@@ -1,0 +1,107 @@
+{
+  "tesserae_compat": "1.x",
+  "name": "AI Image",
+  "version": "0.3.0",
+  "kind": "widget",
+  "description": "Full-bleed AI-generated image. Style presets, multi-line prompt rotation by day-bucket, time-of-day placeholders, e-ink-friendly suffix. The Fal.ai key + per-call usage tracking come from AI Core, so all generations show up in the AI Core admin page. Heir to the legacy fal_image widget.",
+  "icon": "ph-image-square",
+  "supports": { "sizes": ["sm", "md", "lg"] },
+  "design": { "palette": "extended" },
+  "render": { "full_bleed": true, "dither": "floyd-steinberg", "needs_network": true },
+  "cell_options": [
+    {
+      "name": "prompt",
+      "type": "textarea",
+      "label": "Prompt",
+      "rows": 6,
+      "default": "a serene mountain landscape at golden hour, oil painting style",
+      "placeholder": "e.g. a cyberpunk tokyo street, rainy night",
+      "help": "What to generate. Placeholders: {time_of_day}, {day_of_week}, {date}, {month}, {season}, {hour}, {year}, {moon_phase}. One prompt per line rotates by bucket (Mon = line 1, Tue = line 2, etc.)."
+    },
+    {
+      "name": "style",
+      "type": "select",
+      "label": "Style preset",
+      "default": "none",
+      "choices": [
+        { "value": "none",          "label": "None (use prompt as written)" },
+        { "value": "oil_painting",  "label": "Oil painting" },
+        { "value": "watercolor",    "label": "Watercolour" },
+        { "value": "pencil_sketch", "label": "Pencil sketch" },
+        { "value": "pixel_art",     "label": "Pixel art" },
+        { "value": "cyberpunk",     "label": "Cyberpunk" },
+        { "value": "botanical",     "label": "Botanical illustration" },
+        { "value": "bauhaus",       "label": "Bauhaus geometric" },
+        { "value": "risograph",     "label": "Risograph print" },
+        { "value": "line_art",      "label": "Minimal line art" },
+        { "value": "ukiyo_e",       "label": "Ukiyo-e woodblock" },
+        { "value": "art_deco",      "label": "Art deco" }
+      ],
+      "help": "Prepended to the prompt before sending."
+    },
+    {
+      "name": "model",
+      "type": "select",
+      "label": "Fal.ai model",
+      "default": "fal-ai/flux/schnell",
+      "choices": [
+        { "value": "fal-ai/flux/schnell",   "label": "Flux Schnell (~$0.003, fast, recommended)" },
+        { "value": "fal-ai/fast-sdxl",      "label": "Fast SDXL (~$0.01)" },
+        { "value": "fal-ai/flux/dev",       "label": "Flux Dev (~$0.025, higher quality)" },
+        { "value": "fal-ai/recraft-v3",     "label": "Recraft V3 (~$0.04, crisp lines + readable text)" },
+        { "value": "fal-ai/flux-pro/v1.1",  "label": "Flux Pro 1.1 (~$0.04, best Flux)" },
+        { "value": "fal-ai/nano-banana",    "label": "Nano Banana (Gemini 2.5 Flash Image, ~$0.039, always 1024×1024)" },
+        { "value": "fal-ai/nano-banana-2",  "label": "Nano Banana 2 (~$0.08, always 1024×1024)" }
+      ]
+    },
+    {
+      "name": "image_width",
+      "type": "number",
+      "label": "Fal request width (px)",
+      "default": "",
+      "min": 256,
+      "max": 2048,
+      "step": 64,
+      "placeholder": "auto — uses cell width",
+      "help": "Leave empty to use the cell's actual width (rounded up to the next multiple of 64, clamped to [512, 2048])."
+    },
+    {
+      "name": "image_height",
+      "type": "number",
+      "label": "Fal request height (px)",
+      "default": "",
+      "min": 256,
+      "max": 2048,
+      "step": 64,
+      "placeholder": "auto — uses cell height"
+    },
+    {
+      "name": "negative_prompt",
+      "type": "string",
+      "label": "Negative prompt",
+      "default": "",
+      "placeholder": "e.g. blurry, watermark, text",
+      "help": "What to avoid. Honoured by Fast SDXL + Recraft V3; ignored by Flux + Nano Banana."
+    },
+    {
+      "name": "eink_friendly",
+      "type": "boolean",
+      "label": "Append e-ink-friendly suffix",
+      "default": true,
+      "help": "Appends 'high contrast, limited palette, simple composition' so the image dithers cleanly to 6-colour Spectra / 1-bit panels."
+    },
+    {
+      "name": "refresh_hours",
+      "type": "select",
+      "label": "Refresh cadence",
+      "default": "6",
+      "choices": [
+        { "value": "1",  "label": "Hourly (~$2.20/mo on Flux Schnell)" },
+        { "value": "6",  "label": "Every 6 hours (~$0.36/mo)" },
+        { "value": "12", "label": "Every 12 hours (~$0.18/mo)" },
+        { "value": "24", "label": "Daily (~$0.09/mo)" }
+      ],
+      "help": "Cost figures are for Flux Schnell. See AI Core admin page for actual usage."
+    }
+  ]
+}

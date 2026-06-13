@@ -10,7 +10,9 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
-from datetime import datetime
+
+import pytest
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -75,6 +77,167 @@ def test_tz_now_with_unknown_zone_falls_back_to_host_local() -> None:
     with _fake_app(timezone="Not/A/Real/Zone"):
         now = server._tz_now()
     assert now.tzinfo is not None
+
+
+# -- usage log + cost helpers --------------------------------------------
+
+
+def test_anthropic_cost_uses_correct_per_mtok_rate() -> None:
+    # Haiku is $1/Mtok in, $5/Mtok out.
+    cost = server._anthropic_cost("claude-haiku-4-5", 300, 150)
+    assert abs(cost - (300 / 1_000_000 * 1.00 + 150 / 1_000_000 * 5.00)) < 1e-9
+
+
+def test_anthropic_cost_unknown_model_falls_back_to_haiku() -> None:
+    cost = server._anthropic_cost("some-future-model", 1_000_000, 0)
+    assert cost == 1.00  # Haiku input rate fallback
+
+
+def test_fal_cost_lookup() -> None:
+    assert server._fal_cost("fal-ai/flux/schnell") == 0.003
+    assert server._fal_cost("fal-ai/recraft-v3") == 0.04
+
+
+def test_fal_cost_unknown_model_falls_back_to_cheapest() -> None:
+    assert server._fal_cost("not-a-real-model") == 0.003
+
+
+def test_log_usage_writes_jsonl_with_timestamp(tmp_path: Path) -> None:
+    """``_log_usage`` should append a single JSON line to
+    ``data_dir/usage.jsonl`` with an ISO-8601 ``ts`` field stamped at
+    write time."""
+    fake_plugin = type("P", (), {"data_dir": tmp_path})()
+    fake = MagicMock()
+    fake.config = {"PLUGIN_REGISTRY": {"ai_core": fake_plugin}}
+    with patch.object(server, "current_app", fake):
+        server._log_usage({"provider": "anthropic", "model": "x", "cost_usd": 0.001})
+    log = tmp_path / "usage.jsonl"
+    assert log.exists()
+    rows = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+    assert len(rows) == 1
+    assert rows[0]["provider"] == "anthropic"
+    assert rows[0]["cost_usd"] == 0.001
+    assert "T" in rows[0]["ts"] and rows[0]["ts"].endswith("Z")
+
+
+def test_log_usage_silent_when_data_dir_missing() -> None:
+    """No data_dir → log call is a no-op. Live render path must not
+    raise on a fresh install before settings_store wires the plugin."""
+    fake = MagicMock()
+    fake.config = {"PLUGIN_REGISTRY": {}}
+    with patch.object(server, "current_app", fake):
+        server._log_usage({"provider": "anthropic", "model": "x", "cost_usd": 0.001})
+    # No exception raised, nothing else to assert.
+
+
+def test_iter_usage_records_filters_to_window(tmp_path: Path) -> None:
+    log = tmp_path / "usage.jsonl"
+    old_ts = (datetime(2026, 1, 1, tzinfo=server.UTC)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    new_ts = datetime.now(server.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    log.write_text(
+        f'{{"ts":"{old_ts}","provider":"anthropic","model":"x","cost_usd":0.5}}\n'
+        f'{{"ts":"{new_ts}","provider":"fal","model":"y","cost_usd":0.04}}\n'
+    )
+    fake_plugin = type("P", (), {"data_dir": tmp_path})()
+    fake = MagicMock()
+    fake.config = {"PLUGIN_REGISTRY": {"ai_core": fake_plugin}}
+    with patch.object(server, "current_app", fake):
+        recent = server._iter_usage_records(days=30)
+    assert [r["provider"] for r in recent] == ["fal"]  # old one filtered out
+
+
+def test_iter_usage_records_drops_corrupt_lines(tmp_path: Path) -> None:
+    log = tmp_path / "usage.jsonl"
+    new_ts = datetime.now(server.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    log.write_text(
+        "not json at all\n"
+        f'{{"ts":"{new_ts}","provider":"anthropic","model":"x","cost_usd":0.001}}\n'
+        '{"ts":"not-a-timestamp","provider":"fal","model":"y","cost_usd":0.04}\n'
+    )
+    fake_plugin = type("P", (), {"data_dir": tmp_path})()
+    fake = MagicMock()
+    fake.config = {"PLUGIN_REGISTRY": {"ai_core": fake_plugin}}
+    with patch.object(server, "current_app", fake):
+        recent = server._iter_usage_records(days=30)
+    assert len(recent) == 1
+    assert recent[0]["provider"] == "anthropic"
+
+
+def test_aggregate_usage_totals_and_projection() -> None:
+    """Synthesize three records and confirm totals + projection match."""
+    now = datetime(2026, 6, 13, 12, 0, tzinfo=server.UTC)
+    records = [
+        {
+            "_ts": now - timedelta(days=2),
+            "provider": "anthropic",
+            "model": "claude-haiku-4-5",
+            "input_tokens": 300,
+            "output_tokens": 150,
+            "cost_usd": 0.001,
+        },
+        {
+            "_ts": now - timedelta(hours=2),
+            "provider": "anthropic",
+            "model": "claude-haiku-4-5",
+            "input_tokens": 300,
+            "output_tokens": 150,
+            "cost_usd": 0.001,
+        },
+        {
+            "_ts": now - timedelta(hours=1),
+            "provider": "fal",
+            "model": "fal-ai/flux/schnell",
+            "image_count": 1,
+            "cost_usd": 0.003,
+        },
+    ]
+    agg = server._aggregate_usage(records, now=now)
+    assert agg["totals"]["spend_today"] == pytest.approx(0.004, abs=1e-6)
+    assert agg["totals"]["calls_today"] == 2
+    assert agg["totals"]["spend_month"] == pytest.approx(0.005, abs=1e-6)
+    assert agg["totals"]["calls_month"] == 3
+    # Projection: 7-day rate is 0.005 / 7 per day → 30 days = ~0.021.
+    # ``projection_monthly`` is rounded to 2 decimal places for display,
+    # so the assertion tolerance covers the rounding loss.
+    assert agg["projection_monthly"] == pytest.approx(0.005 / 7 * 30, abs=0.005)
+    # Per-model breakdown is sorted by spend desc. Flux Schnell ($0.003)
+    # outspends the two Haiku calls ($0.001 each = $0.002).
+    assert agg["model_breakdown"][0]["model"] == "fal-ai/flux/schnell"
+    assert agg["model_breakdown"][0]["calls"] == 1
+    haiku = next(m for m in agg["model_breakdown"] if m["model"] == "claude-haiku-4-5")
+    assert haiku["calls"] == 2
+
+
+def test_aggregate_usage_empty_log_returns_zero_projection() -> None:
+    agg = server._aggregate_usage([], now=datetime(2026, 6, 13, tzinfo=server.UTC))
+    assert agg["totals"]["spend_today"] == 0.0
+    assert agg["projection_monthly"] == 0.0
+    assert agg["model_breakdown"] == []
+    # Daily series should still have 30 zero-filled days for the chart axis.
+    assert len(agg["daily_series"]) == 30
+    assert all(d["calls"] == 0 for d in agg["daily_series"])
+
+
+def test_aggregate_daily_series_continuous_30_days() -> None:
+    """Even if only one day has data, the chart axis spans 30 days
+    with zero-filled buckets so Chart.js doesn't compress weeks of
+    missing days into a single tick."""
+    now = datetime(2026, 6, 13, tzinfo=server.UTC)
+    records = [
+        {
+            "_ts": now - timedelta(days=15),
+            "provider": "anthropic",
+            "model": "claude-haiku-4-5",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cost_usd": 0.01,
+        }
+    ]
+    agg = server._aggregate_usage(records, now=now)
+    assert len(agg["daily_series"]) == 30
+    nonzero = [d for d in agg["daily_series"] if d["anthropic"] > 0]
+    assert len(nonzero) == 1
+    assert nonzero[0]["anthropic"] == 0.01
 
 
 def test_resolve_weather_nested_dict() -> None:

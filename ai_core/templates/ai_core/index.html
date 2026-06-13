@@ -1,0 +1,258 @@
+{% extends "_base.html" %}
+{% from "_components.html" import card_head %}
+{% block title %}AI Core, Tesserae{% endblock %}
+
+{% block main %}
+<div class="page-head">
+  <h1><i class="ph-bold ph-sparkle" aria-hidden="true"></i> AI Core usage</h1>
+  <p class="page-blurb">Token / image usage and estimated cost for every call the <code>ai_brief</code>, <code>ai_scene</code>, and <code>ai_image</code> widgets make through this plugin. Numbers are estimates from a static price table; actual billing is whatever Anthropic and Fal.ai invoice you. Log lives at <code>{{ log_path }}</code>.</p>
+</div>
+
+{# Top-line stat cards #}
+<section class="card aicore-stats">
+  <div class="aicore-stat-grid">
+    <div class="aicore-stat">
+      <span class="aicore-stat-label">Today</span>
+      <span class="aicore-stat-value">${{ '%.4f'|format(aggregate.totals.spend_today) }}</span>
+      <span class="muted">{{ aggregate.totals.calls_today }} call{{ '' if aggregate.totals.calls_today == 1 else 's' }}</span>
+    </div>
+    <div class="aicore-stat">
+      <span class="aicore-stat-label">This month</span>
+      <span class="aicore-stat-value">${{ '%.2f'|format(aggregate.totals.spend_month) }}</span>
+      <span class="muted">{{ aggregate.totals.calls_month }} call{{ '' if aggregate.totals.calls_month == 1 else 's' }}</span>
+    </div>
+    <div class="aicore-stat">
+      <span class="aicore-stat-label">Last 7 days</span>
+      <span class="aicore-stat-value">${{ '%.2f'|format(aggregate.totals.spend_7d) }}</span>
+      <span class="muted">{{ aggregate.totals.calls_7d }} call{{ '' if aggregate.totals.calls_7d == 1 else 's' }}</span>
+    </div>
+    <div class="aicore-stat">
+      <span class="aicore-stat-label">Projection (30d)</span>
+      <span class="aicore-stat-value">${{ '%.2f'|format(aggregate.projection_monthly) }}</span>
+      <span class="muted">at the 7-day rate</span>
+    </div>
+  </div>
+  <p class="muted aicore-keys">
+    <span class="pill {% if has_anthropic_key %}is-ok{% else %}is-warn{% endif %}">
+      <i class="ph {{ 'ph-check-circle' if has_anthropic_key else 'ph-warning-circle' }}" aria-hidden="true"></i>
+      Anthropic key {{ 'set' if has_anthropic_key else 'not set' }}
+    </span>
+    <span class="pill {% if has_fal_key %}is-ok{% else %}is-warn{% endif %}">
+      <i class="ph {{ 'ph-check-circle' if has_fal_key else 'ph-warning-circle' }}" aria-hidden="true"></i>
+      Fal.ai key {{ 'set' if has_fal_key else 'not set' }}
+    </span>
+    <span class="muted">·</span>
+    <a href="{{ url_for('settings.index') }}#plugins">Manage keys in Settings → Plugins → AI Core</a>
+  </p>
+</section>
+
+{# Charts #}
+<section class="card">
+  {{ card_head('Daily spend, last 30 days', icon_name='chart-bar', level=2,
+               blurb='Stacked by provider. Days with zero calls render as a gap so the timeline reads at a glance.') }}
+  <div class="aicore-chart"><canvas id="aicore-daily-spend"></canvas></div>
+</section>
+
+<section class="card">
+  {{ card_head('Daily call volume, last 30 days', icon_name='chart-line', level=2,
+               blurb='Number of generations per day across both providers.') }}
+  <div class="aicore-chart"><canvas id="aicore-daily-calls"></canvas></div>
+</section>
+
+<section class="card">
+  {{ card_head('Per-model breakdown', icon_name='list-bullets', level=2,
+               blurb='Sum across the entire log. ~est cost column uses the rates in this plugin\'s code; the real invoice may differ.') }}
+  {% if aggregate.model_breakdown %}
+  <table class="aicore-breakdown">
+    <thead>
+      <tr>
+        <th>Model</th>
+        <th>Provider</th>
+        <th class="num">Calls</th>
+        <th class="num">In tok</th>
+        <th class="num">Out tok</th>
+        <th class="num">Images</th>
+        <th class="num">~Est cost</th>
+        <th class="num">Avg / call</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in aggregate.model_breakdown %}
+      <tr>
+        <td><code>{{ row.model }}</code></td>
+        <td>{{ row.provider }}</td>
+        <td class="num">{{ row.calls }}</td>
+        <td class="num">{{ '{:,}'.format(row.input_tokens) if row.input_tokens else '—' }}</td>
+        <td class="num">{{ '{:,}'.format(row.output_tokens) if row.output_tokens else '—' }}</td>
+        <td class="num">{{ row.images if row.images else '—' }}</td>
+        <td class="num">${{ '%.4f'|format(row.spend) }}</td>
+        <td class="num muted">${{ '%.5f'|format(row.avg_cost) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No calls logged yet. Drop an <code>ai_brief</code>, <code>ai_scene</code>, or <code>ai_image</code> widget on a dashboard and trigger a render; numbers show up here on the next reload.</p>
+  {% endif %}
+</section>
+
+<section class="card aicore-pricing">
+  {{ card_head('Reference rates', icon_name='currency-dollar', level=2,
+               blurb='What this plugin assumes when it estimates cost.') }}
+  <div class="aicore-pricing-grid">
+    <div>
+      <h3>Anthropic, $ / Mtok</h3>
+      <table class="aicore-pricing-table">
+        <thead><tr><th>Model</th><th class="num">Input</th><th class="num">Output</th></tr></thead>
+        <tbody>
+          {% for model, rates in aggregate.anthropic_pricing.items() %}
+          <tr>
+            <td><code>{{ model }}</code></td>
+            <td class="num">${{ '%.2f'|format(rates[0]) }}</td>
+            <td class="num">${{ '%.2f'|format(rates[1]) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h3>Fal.ai, $ / image</h3>
+      <table class="aicore-pricing-table">
+        <thead><tr><th>Model</th><th class="num">Per image</th></tr></thead>
+        <tbody>
+          {% for model, rate in aggregate.fal_pricing.items() %}
+          <tr>
+            <td><code>{{ model }}</code></td>
+            <td class="num">${{ '%.3f'|format(rate) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <p class="muted">Numbers come from each provider's published pricing page; if they shift, the next ai_core release will catch up. The real invoice is whatever the provider charges.</p>
+</section>
+
+<style>
+  .aicore-stats { padding: var(--t-space-3) var(--t-space-4); }
+  .aicore-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: var(--t-space-3);
+  }
+  .aicore-stat {
+    display: flex; flex-direction: column; gap: 4px;
+    padding: var(--t-space-3); border-radius: var(--t-radius-md);
+    background: var(--t-bg-soft, rgba(0,0,0,0.04));
+  }
+  .aicore-stat-label {
+    font-size: var(--t-size-sm); text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--t-fg-soft, var(--text-muted));
+    font-weight: 600;
+  }
+  .aicore-stat-value { font-size: 1.6em; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .aicore-keys {
+    margin-top: var(--t-space-3);
+    display: flex; flex-wrap: wrap; align-items: center; gap: var(--t-space-2);
+  }
+  .aicore-chart { position: relative; min-height: 240px; padding: var(--t-space-2); }
+  .aicore-breakdown {
+    width: 100%; border-collapse: collapse;
+    font-size: var(--t-size-sm);
+  }
+  .aicore-breakdown th, .aicore-breakdown td {
+    padding: 6px var(--t-space-2);
+    border-bottom: 1px solid var(--t-border, rgba(0,0,0,0.08));
+    text-align: left;
+  }
+  .aicore-breakdown th.num, .aicore-breakdown td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .aicore-pricing-grid {
+    display: grid; gap: var(--t-space-4);
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+  .aicore-pricing-table { width: 100%; border-collapse: collapse; font-size: var(--t-size-sm); }
+  .aicore-pricing-table th, .aicore-pricing-table td {
+    padding: 4px var(--t-space-2);
+    border-bottom: 1px solid var(--t-border, rgba(0,0,0,0.06));
+  }
+  .aicore-pricing-table th.num, .aicore-pricing-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+</style>
+
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
+<script>
+  (function () {
+    "use strict";
+    const data = {{ aggregate.daily_series | tojson }};
+    const labels = data.map(function (d) { return d.day.slice(5); /* MM-DD */ });
+    const anthropic = data.map(function (d) { return d.anthropic; });
+    const fal = data.map(function (d) { return d.fal; });
+    const calls = data.map(function (d) { return d.calls; });
+
+    // Read theme accent so the charts blend into the active Spectra style.
+    const root = getComputedStyle(document.documentElement);
+    const accent = (root.getPropertyValue('--accent-3') || '#0d8c7e').trim();
+    const accent4 = (root.getPropertyValue('--accent-4') || '#c97a4a').trim();
+    const fg = (root.getPropertyValue('--text') || '#241a14').trim();
+    const muted = (root.getPropertyValue('--text-muted') || '#736a5e').trim();
+
+    Chart.defaults.color = muted;
+    Chart.defaults.font.family = root.getPropertyValue('--font-family').trim() || Chart.defaults.font.family;
+
+    const spendCtx = document.getElementById('aicore-daily-spend').getContext('2d');
+    new Chart(spendCtx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [
+          { label: 'Anthropic', data: anthropic, backgroundColor: accent, stack: 'total' },
+          { label: 'Fal.ai',    data: fal,       backgroundColor: accent4, stack: 'total' },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { stacked: true, ticks: { autoSkip: true, maxRotation: 0 } },
+          y: { stacked: true, beginAtZero: true, ticks: { callback: function (v) { return '$' + Number(v).toFixed(2); } } },
+        },
+        plugins: {
+          legend: { position: 'bottom' },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                return ctx.dataset.label + ': $' + Number(ctx.parsed.y).toFixed(4);
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const callsCtx = document.getElementById('aicore-daily-calls').getContext('2d');
+    new Chart(callsCtx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Calls',
+          data: calls,
+          borderColor: accent,
+          backgroundColor: accent + '33',
+          tension: 0.25,
+          fill: true,
+          pointRadius: 3,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { ticks: { autoSkip: true, maxRotation: 0 } },
+          y: { beginAtZero: true, ticks: { precision: 0 } },
+        },
+        plugins: { legend: { display: false } },
+      },
+    });
+  })();
+</script>
+{% endblock %}
