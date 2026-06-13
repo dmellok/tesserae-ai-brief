@@ -1,30 +1,38 @@
 {
   "tesserae_compat": "1.x",
   "name": "AI Core",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "kind": "data",
-  "description": "Shared Anthropic Claude connection + context resolver for the ai_* widget family. Set your Anthropic API key once here and every ai widget uses it. Resolves placeholders like {weather.now.temp_c}, {todo.count}, {calendar.next.title}, {ha.entity.<entity_id>.state}, {time.day_of_week} against the live state of other widget cores. No cell of its own.",
+  "description": "Shared AI service connections + context resolver for the ai_* widget family. Holds the Anthropic API key (used by ai_brief for text) and the Fal.ai API key (used by ai_scene for image generation). Resolves placeholders like {weather.now.temp_c}, {calendar.next.title}, {ha.entity.<entity_id>.state}, {time.day_of_week} against the live state of other widget cores. No cell of its own.",
   "icon": "ph-sparkle",
   "supports": { "sizes": ["xs", "sm", "md", "lg"] },
   "settings": [
     {
       "name": "api_key",
       "type": "string",
-      "label": "Anthropic API key",
+      "label": "Anthropic API key (for ai_brief)",
       "secret": true,
       "default": "",
-      "help": "Get one at https://console.anthropic.com/. Stored locally; only sent to api.anthropic.com when an ai_* widget renders. Claude Haiku 4.5 is the default model (~$0.00025 per brief, ~$0.18/month at hourly refresh)."
+      "help": "Get one at https://console.anthropic.com/. Stored locally; only sent to api.anthropic.com when ai_brief renders. Claude Haiku 4.5 is the default model (~$0.00025 per brief, ~$0.18/month at hourly refresh)."
     },
     {
       "name": "model",
       "type": "select",
-      "label": "Default model",
+      "label": "Default Claude model",
       "default": "claude-haiku-4-5",
       "choices": [
         { "value": "claude-haiku-4-5", "label": "Claude Haiku 4.5 (cheap, fast, recommended)" },
         { "value": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6 (smarter, ~5x cost)" },
         { "value": "claude-opus-4-8", "label": "Claude Opus 4.8 (smartest, ~20x cost)" }
       ]
+    },
+    {
+      "name": "fal_api_key",
+      "type": "string",
+      "label": "Fal.ai API key (for ai_scene)",
+      "secret": true,
+      "default": "",
+      "help": "Get one at https://fal.ai/dashboard/keys. Stored locally; only sent to fal.run when ai_scene renders. Flux Schnell is the default model (~$0.003 per image, ~$2.20/month at hourly refresh)."
     }
   ],
   "render": { "needs_network": true }

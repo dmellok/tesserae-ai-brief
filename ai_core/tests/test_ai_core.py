@@ -144,6 +144,74 @@ def test_call_llm_empty_response_returns_error() -> None:
     assert out["error"] == "Empty response from model"
 
 
+# -- fal_call -----------------------------------------------------------
+
+
+def test_fal_call_without_key_returns_error() -> None:
+    with _fake_app(timezone="UTC", settings={}):
+        out = server.fal_call("a sunset")
+    assert out["error"].startswith("Fal.ai API key not set")
+
+
+def test_fal_call_happy_path_returns_image_url() -> None:
+    body = json.dumps(
+        {
+            "images": [{"url": "https://v3.fal.media/files/x/scene.jpg"}],
+            "seed": 42,
+        }
+    ).encode("utf-8")
+    with (
+        _fake_app(timezone="UTC", settings={"fal_api_key_secret": "fal-test"}),
+        patch.object(server.urllib.request, "urlopen", return_value=_fake_resp(body)),
+    ):
+        out = server.fal_call("a sunset", model="fal-ai/flux/schnell", width=1024, height=1024)
+    assert out["image_url"] == "https://v3.fal.media/files/x/scene.jpg"
+    assert out["model"] == "fal-ai/flux/schnell"
+
+
+def test_fal_call_http_error_returns_error() -> None:
+    import urllib.error
+
+    err = urllib.error.HTTPError(
+        url=server.FAL_API_BASE,
+        code=401,
+        msg="Unauthorized",
+        hdrs=None,  # type: ignore[arg-type]
+        fp=io.BytesIO(json.dumps({"detail": "Invalid API key"}).encode("utf-8")),
+    )
+    with (
+        _fake_app(timezone="UTC", settings={"fal_api_key_secret": "fal-test"}),
+        patch.object(server.urllib.request, "urlopen", side_effect=err),
+    ):
+        out = server.fal_call("hello")
+    assert "401" in out["error"]
+    assert "Invalid API key" in out["error"]
+
+
+def test_fal_call_no_image_returns_error() -> None:
+    body = json.dumps({"timings": {"inference": 0.5}}).encode("utf-8")
+    with (
+        _fake_app(timezone="UTC", settings={"fal_api_key_secret": "fal-test"}),
+        patch.object(server.urllib.request, "urlopen", return_value=_fake_resp(body)),
+    ):
+        out = server.fal_call("hello")
+    assert "did not contain an image URL" in out["error"]
+
+
+def test_fal_call_legacy_single_image_shape() -> None:
+    """Older Fal endpoints return ``{"image": {"url": "..."}}`` instead
+    of an images list."""
+    body = json.dumps(
+        {"image": {"url": "https://v3.fal.media/legacy.jpg"}}
+    ).encode("utf-8")
+    with (
+        _fake_app(timezone="UTC", settings={"fal_api_key_secret": "fal-test"}),
+        patch.object(server.urllib.request, "urlopen", return_value=_fake_resp(body)),
+    ):
+        out = server.fal_call("hello")
+    assert out["image_url"] == "https://v3.fal.media/legacy.jpg"
+
+
 # -- helpers ----------------------------------------------------------------
 
 

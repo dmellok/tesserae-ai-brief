@@ -32,8 +32,12 @@ from flask import current_app
 
 USER_AGENT = "tesserae/0.1 (+ai_core)"
 ANTHROPIC_VERSION = "2023-06-01"
-ENDPOINT = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_ENDPOINT = "https://api.anthropic.com/v1/messages"
+ENDPOINT = ANTHROPIC_ENDPOINT  # backwards-compat alias for v0.1.x callers
+FAL_API_BASE = "https://fal.run"
 HTTP_TIMEOUT_S = 30
+# Image generation can take 10-60s for slower models (Flux Dev, Recraft).
+FAL_TIMEOUT_S = 90
 
 # Whitelist of placeholder roots the resolver recognises. Anything
 # outside this set returns "unknown" rather than reaching into the
@@ -62,6 +66,13 @@ def api_key() -> str:
 
 def default_model() -> str:
     return (_settings().get("model") or "claude-haiku-4-5").strip()
+
+
+def fal_api_key() -> str:
+    """The Fal.ai API key. Stored as ``fal_api_key_secret`` on disk per
+    the settings_store secret convention."""
+    s = _settings()
+    return (s.get("fal_api_key_secret") or s.get("fal_api_key") or "").strip()
 
 
 # ---------------------------------------------------------------- LLM call
@@ -133,6 +144,107 @@ def call_llm(
     if not text:
         return {"error": "Empty response from model"}
     return {"text": text, "model": payload.get("model") or body["model"]}
+
+
+# ---------------------------------------------------------------- Fal image call
+
+
+def fal_call(
+    prompt: str,
+    *,
+    model: str = "fal-ai/flux/schnell",
+    width: int = 1024,
+    height: int = 1024,
+    negative_prompt: str = "",
+    seed: int | None = None,
+) -> dict[str, Any]:
+    """Synchronous Fal.ai image-generation call. Returns
+    ``{"image_url": "...", "model": "..."}`` on success or
+    ``{"error": "..."}`` on any failure.
+
+    Body shape covers the most common Fal models: Flux Schnell / Dev /
+    Pro, SDXL variants, Recraft V3, Nano Banana. Each accepts
+    ``prompt`` + ``image_size`` (object with width/height) + optional
+    ``negative_prompt`` + ``seed`` + ``num_images`` and returns
+    ``{"images": [{"url": ...}], ...}``. Never raises.
+    """
+    key = fal_api_key()
+    if not key:
+        return {
+            "error": (
+                "Fal.ai API key not set. Add one at Settings -> Plugins -> AI Core."
+            )
+        }
+    body: dict[str, Any] = {
+        "prompt": prompt,
+        "image_size": {"width": int(width), "height": int(height)},
+        "num_images": 1,
+        "enable_safety_checker": False,
+    }
+    if negative_prompt:
+        body["negative_prompt"] = negative_prompt
+    if seed is not None:
+        body["seed"] = int(seed)
+
+    url = f"{FAL_API_BASE}/{model.lstrip('/')}"
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Authorization": f"Key {key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=FAL_TIMEOUT_S) as resp:  # noqa: S310
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as err:
+        try:
+            body_text = err.read().decode("utf-8", errors="replace")
+            detail = json.loads(body_text).get("detail") or json.loads(body_text).get(
+                "error", {}
+            ).get("message", "")
+            if not detail:
+                detail = body_text[:200]
+        except (json.JSONDecodeError, OSError):
+            detail = ""
+        return {"error": f"HTTP {err.code}: {detail or err.reason}"}
+    except (urllib.error.URLError, TimeoutError, OSError) as err:
+        return {"error": f"{type(err).__name__}: {err}"}
+    except json.JSONDecodeError as err:
+        return {"error": f"Malformed response: {err}"}
+
+    image_url = _pick_fal_image_url(payload)
+    if not image_url:
+        return {"error": "Fal response did not contain an image URL"}
+    return {"image_url": image_url, "model": model}
+
+
+def _pick_fal_image_url(payload: Any) -> str | None:
+    """Extract the first image URL from a Fal response.
+
+    Most Fal models return ``{"images": [{"url": ...}], ...}``. A few
+    (older single-image endpoints) return ``{"image": {"url": ...}}``.
+    Try both shapes.
+    """
+    if not isinstance(payload, dict):
+        return None
+    images = payload.get("images")
+    if isinstance(images, list) and images:
+        first = images[0]
+        if isinstance(first, dict):
+            url = first.get("url")
+            if isinstance(url, str) and url:
+                return url
+    image = payload.get("image")
+    if isinstance(image, dict):
+        url = image.get("url")
+        if isinstance(url, str) and url:
+            return url
+    return None
 
 
 # ---------------------------------------------------------------- placeholders

@@ -1,0 +1,132 @@
+{
+  "tesserae_compat": "1.x",
+  "name": "AI Scene",
+  "version": "0.1.0",
+  "kind": "widget",
+  "description": "Full-bleed AI-generated image whose prompt is rewritten every refresh from live data: weather, calendar events, Home Assistant entities, time of day. The image adapts to the dashboard's actual context. Bring your own Fal.ai API key (configured once on the AI Core plugin). Defaults to Flux Schnell (~$0.003/image, ~$2.20/month at hourly refresh).",
+  "icon": "ph-image",
+  "supports": { "sizes": ["sm", "md", "lg"] },
+  "design": { "palette": "extended" },
+  "render": { "full_bleed": true, "dither": "floyd-steinberg", "needs_network": true },
+  "cell_options": [
+    {
+      "name": "prompt_template",
+      "type": "variables_textarea",
+      "label": "Prompt template",
+      "rows": 12,
+      "default": "A serene watercolor of {weather.now.condition} at {time.am_pm}. Soft natural light, painterly brushstrokes, no text, no people. Mood: calm.",
+      "help": "Click a chip below to insert a placeholder at the cursor. The resolved prompt is sent to Fal.ai; missing data renders as \"unknown\" so the image always generates.",
+      "variables": [
+        { "value": "{weather.now.condition}",       "label": "Weather: condition",          "category": "Weather" },
+        { "value": "{weather.now.temp_c}",          "label": "Weather: temp (°C)",          "category": "Weather" },
+        { "value": "{weather.now.feels_like_c}",    "label": "Weather: feels-like (°C)",    "category": "Weather" },
+        { "value": "{weather.today.high_c}",        "label": "Weather: today's high (°C)",  "category": "Weather" },
+        { "value": "{weather.today.low_c}",         "label": "Weather: today's low (°C)",   "category": "Weather" },
+        { "value": "{weather.today.precip_pct}",    "label": "Weather: rain chance (%)",    "category": "Weather" },
+        { "value": "{calendar.events_today}",       "label": "Calendar: events today",      "category": "Calendar" },
+        { "value": "{calendar.next.title}",         "label": "Calendar: next title",        "category": "Calendar" },
+        { "value": "{calendar.next.in_minutes}",    "label": "Calendar: next in N min",     "category": "Calendar" },
+        { "value": "{ha.entity.<entity_id>.state}", "label": "HA: entity state",            "category": "Home Assistant" },
+        { "value": "{time.day_of_week}",            "label": "Time: day of week",           "category": "Time" },
+        { "value": "{time.hour}",                   "label": "Time: hour (00-23)",          "category": "Time" },
+        { "value": "{time.am_pm}",                  "label": "Time: AM / PM",               "category": "Time" },
+        { "value": "{time.is_morning}",             "label": "Time: is morning",            "category": "Time" },
+        { "value": "{time.is_afternoon}",           "label": "Time: is afternoon",          "category": "Time" },
+        { "value": "{time.is_evening}",             "label": "Time: is evening",            "category": "Time" },
+        { "value": "{time.is_night}",               "label": "Time: is night",              "category": "Time" }
+      ]
+    },
+    {
+      "name": "model",
+      "type": "select",
+      "label": "Fal.ai model",
+      "default": "fal-ai/flux/schnell",
+      "choices": [
+        { "value": "fal-ai/flux/schnell",   "label": "Flux Schnell (~$0.003, fast, recommended)" },
+        { "value": "fal-ai/hyper-sdxl",     "label": "Hyper SDXL (~$0.003, 1-step)" },
+        { "value": "fal-ai/fast-sdxl",      "label": "Fast SDXL (~$0.01)" },
+        { "value": "fal-ai/flux/dev",       "label": "Flux Dev (~$0.025, higher quality)" },
+        { "value": "fal-ai/recraft-v3",     "label": "Recraft V3 (~$0.04, crisp lines)" },
+        { "value": "fal-ai/flux-pro/v1.1",  "label": "Flux Pro 1.1 (~$0.04, best Flux)" },
+        { "value": "fal-ai/nano-banana",    "label": "Nano Banana (Gemini 2.5 Flash Image, ~$0.039)" },
+        { "value": "fal-ai/nano-banana-2",  "label": "Nano Banana 2 (~$0.08)" }
+      ]
+    },
+    {
+      "name": "latitude",
+      "type": "number",
+      "label": "Latitude (for weather)",
+      "default": "",
+      "step": "any",
+      "help": "Leave empty to use the server-level home location (Settings → Server → Location)."
+    },
+    {
+      "name": "longitude",
+      "type": "number",
+      "label": "Longitude (for weather)",
+      "default": "",
+      "step": "any",
+      "help": "Leave empty to use the server-level home location."
+    },
+    {
+      "name": "units",
+      "type": "select",
+      "label": "Weather units",
+      "default": "metric",
+      "choices": [
+        { "value": "metric",   "label": "Metric (°C, km/h)" },
+        { "value": "imperial", "label": "Imperial (°F, mph)" }
+      ]
+    },
+    {
+      "name": "include_calendar",
+      "type": "boolean",
+      "label": "Resolve {calendar.*} from configured iCal feeds",
+      "default": true
+    },
+    {
+      "name": "ha_entities",
+      "type": "string",
+      "label": "Home Assistant entities whitelist",
+      "default": "",
+      "placeholder": "sensor.living_room_temp, light.kitchen",
+      "help": "Comma-separated entity IDs that {ha.entity.<entity_id>.state} is allowed to read. Empty = no HA placeholders resolve."
+    },
+    {
+      "name": "negative_prompt",
+      "type": "string",
+      "label": "Negative prompt (optional)",
+      "default": "blurry, low quality, watermark, signature, text, logo, frame",
+      "placeholder": "blurry, watermark, text",
+      "help": "What you don't want in the image. Ignored by some models (Flux Schnell)."
+    },
+    {
+      "name": "refresh_minutes",
+      "type": "number",
+      "label": "Refresh interval (minutes)",
+      "default": 60,
+      "min": 5,
+      "max": 1440,
+      "help": "Hourly refresh on Flux Schnell costs roughly $2.20/month. Cached frames are reused until the resolved prompt actually changes."
+    },
+    {
+      "name": "image_width",
+      "type": "number",
+      "label": "Fal request width (px)",
+      "default": 1024,
+      "min": 256,
+      "max": 2048,
+      "step": 64,
+      "help": "What Fal generates at. The renderer will scale + dither to the panel afterwards. Match the cell's aspect ratio for the best framing."
+    },
+    {
+      "name": "image_height",
+      "type": "number",
+      "label": "Fal request height (px)",
+      "default": 1024,
+      "min": 256,
+      "max": 2048,
+      "step": 64
+    }
+  ]
+}
