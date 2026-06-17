@@ -92,4 +92,4 @@ The cache key is `(resolved_prompt, model, …)`, so changes to either invalidat
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
+AGPL-3.0-or-later. See [LICENSE](./LICENSE).
