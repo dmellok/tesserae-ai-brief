@@ -257,6 +257,11 @@ def fetch(
         try:
             cached = json.loads(cache_path.read_text(encoding="utf-8"))
             cached["from_cache"] = True
+            # ``header_label`` is a UI string from the cell editor, not
+            # part of the LLM response. Overlay on cache hit so an
+            # edit to the header shows up on the next preview instead
+            # of waiting for the refresh interval.
+            cached["header_label"] = header_label
             return cached
         except (json.JSONDecodeError, OSError):
             pass
